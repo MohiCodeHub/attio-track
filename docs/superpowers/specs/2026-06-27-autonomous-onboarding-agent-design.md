@@ -56,20 +56,20 @@ The agent runs autonomously up to a defined ceiling, defined by three axes:
    - **LiveKit Cloud** = hosted WebRTC media server that facilitates the call (Room-based).
    - **Browser frontend** = minimal web page (LiveKit JS SDK) the customer opens from the email link; joins the Room.
    - **Agent worker** (LiveKit Agents, Python) = registers with LiveKit Cloud, is dispatched into the Room, runs the `AgentSession` pipeline (VAD → STT → LLM → TTS, with turn detection + barge-in).
-   - **SLNG** = the STT/TTS layer, plugged into the AgentSession via the LiveKit SLNG plugin.
+   - **SLNG** = the STT/TTS layer, plugged into the AgentSession via the LiveKit SLNG plugin. **Gemini** is the LLM step. Use the staged pipeline (SLNG STT → Gemini text → SLNG TTS) — *not* Gemini's native Live audio API — so SLNG stays in the stack.
 6. **Provisioning tool (browser-use):** the agent's LLM calls tool functions (`provision_workspace`, `invite_user`, `generate_api_key`, `set_plan`) that drive a real browser over the **mock "Acme" product** admin panel. This runs *during* the voice call via LiveKit tool-calling.
 7. **Mock "Acme" SaaS product (FastAPI + simple HTML admin panel):** the target system the agent operates. We own it → stable for browser-use and the demo.
-8. **Pre-call research (Tavily, recommended):** before the call, the agent researches the customer's company to tailor onboarding ("you're a fintech → let's prioritise X"). Genuinely useful context-gathering *and* satisfies the ≥3 partner-tech requirement (see §9).
+8. **Pre-call research (Gemini Google Search grounding):** before the call, the agent researches the customer's company to tailor onboarding ("you're a fintech → let's prioritise X"). Uses Gemini's built-in search grounding — no separate enrichment vendor needed.
 
 ### Data flow (happy path)
 ```
 Deal → Closed Won (Attio)
   → webhook → agent backend
   → read deal + account context (Attio MCP/REST)
-  → [Tavily] research customer company
+  → [Gemini search grounding] research customer company
   → send scheduling email with call link (Email)
   → customer clicks link → browser joins LiveKit Room
-  → agent worker dispatched → voice conversation (SLNG STT/TTS, Claude LLM)
+  → agent worker dispatched → voice conversation (SLNG STT/TTS, Gemini LLM)
   → agent calls tools → browser-use provisions in Acme admin panel (live)
   → agent reads back credentials, confirms activation
   → write notes + status (Activated) + outcome to Attio
@@ -86,11 +86,11 @@ Deal → Closed Won (Attio)
 | Agent backend / API | FastAPI |
 | Voice transport | LiveKit Cloud (WebRTC), LiveKit Agents framework |
 | Speech (STT/TTS) | SLNG via LiveKit SLNG plugin |
-| LLM (reasoning + voice) | Anthropic Claude — `claude-sonnet-4-6` for the realtime voice loop + browser-use (latency); `claude-opus-4-8` for the planning/decision step |
-| Browser automation | `browser-use` (Playwright + Claude) on the Acme admin panel |
+| LLM (reasoning + voice) | Google Gemini — latest Gemini 2.5 family; Flash tier for the realtime voice loop + browser-use (latency), Pro tier for the planning/decision step. *(Confirm exact model IDs + LiveKit `google` plugin at build.)* |
+| Browser automation | `browser-use` (Playwright + Gemini) on the Acme admin panel |
 | CRM | Attio (MCP + REST API) |
 | Email | Resend (send); inbound webhook = stretch |
-| Pre-call research | Tavily (recommended) |
+| Pre-call research | Gemini Google Search grounding (no separate vendor) |
 | Mock product | FastAPI + minimal HTML admin panel |
 | Frontend (call UI) | Static HTML + LiveKit JS SDK |
 | Public URLs (demo) | ngrok / cloudflared tunnel (for Attio webhook + email link landing) |
@@ -134,15 +134,12 @@ You'll need to create accounts and set these as environment variables (`.env`). 
 ### SLNG
 - 🔑 `SLNG_API_KEY` — from slng.ai (hackathon partner credentials). Used by the LiveKit SLNG plugin for STT/TTS.
 
-### Anthropic
-- 🔑 `ANTHROPIC_API_KEY` — LLM for the voice agent reasoning + browser-use.
+### Google Gemini
+- 🔑 `GOOGLE_API_KEY` (a.k.a. `GEMINI_API_KEY`) — LLM for the voice agent reasoning, browser-use, and pre-call research (Google Search grounding). From Google AI Studio.
 
 ### Email (Resend)
 - 🔑 `RESEND_API_KEY`
 - 🔑 A verified sending domain (or use Resend's onboarding/sandbox sender for the demo).
-
-### Tavily (recommended, 3rd partner tech)
-- 🔑 `TAVILY_API_KEY` — pre-call company research.
 
 ### Tunnel (demo)
 - 🔑 ngrok or cloudflared installed + authed (public URL for the Attio webhook and the email's call link).
@@ -159,10 +156,10 @@ You'll need to create accounts and set these as environment variables (`.env`). 
 
 - **Attio** — trigger source + write-back target (core).
 - **SLNG** — voice STT/TTS in the live onboarding call.
-- **Tavily** — pre-call customer research (recommended; restores the 3rd partner cleanly and adds real value).
+- **Google Gemini** — LLM for reasoning, browser-use, and pre-call research grounding.
 - **Aikido** — security scan (separate €1000 side challenge; do regardless).
 
-LiveKit is the voice transport but is not assumed to be a counted partner. With Attio + SLNG + Tavily we satisfy ≥3 comfortably. **Open decision:** confirm Tavily is in (recommended) vs relying on Aikido as the 3rd.
+Attio + SLNG + Gemini = 3 partner techs, satisfied. LiveKit is the voice transport (not assumed to be a counted partner). Tavily is **dropped** — no longer needed for the count, and Gemini's search grounding covers pre-call research.
 
 ---
 
@@ -202,6 +199,6 @@ LiveKit is the voice transport but is not assumed to be a counted partner. With 
 
 ## 13. Open decisions to confirm before planning
 
-1. **Tavily in or out** as the 3rd partner tech (recommended: in, for pre-call research).
+1. ~~Tavily in or out~~ — **resolved:** Gemini is the 3rd partner; Tavily dropped.
 2. **Trigger mechanism:** native Attio workflow HTTP action vs REST webhook vs polling fallback — resolve early during build (polling is the safe default).
 3. **Committed scope vs hero:** confirm Layers 1–2 are the committed deliverable and Layers 3–4 are the hero target.
