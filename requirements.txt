@@ -1,0 +1,18 @@
+# Web service
+fastapi
+uvicorn[standard]
+httpx
+python-dotenv
+jinja2
+pyjwt
+
+# Voice agent worker
+livekit-agents
+livekit-plugins-silero
+livekit-plugins-google
+
+# Browser automation (provisioning)
+browser-use
+playwright
+python-multipart
+livekit-plugins-slng

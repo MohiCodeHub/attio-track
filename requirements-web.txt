@@ -1,0 +1,9 @@
+# Lightweight deps for the Render WEB service (webhook + token + call UI + Acme).
+# The voice worker + browser automation run separately (see requirements.txt).
+fastapi
+uvicorn[standard]
+httpx
+python-dotenv
+jinja2
+pyjwt
+python-multipart

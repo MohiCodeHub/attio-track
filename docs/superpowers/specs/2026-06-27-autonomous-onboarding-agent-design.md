@@ -86,8 +86,8 @@ Deal → Closed Won (Attio)
 | Agent backend / API | FastAPI |
 | Voice transport | LiveKit Cloud (WebRTC), LiveKit Agents framework |
 | Speech (STT/TTS) | SLNG via LiveKit SLNG plugin |
-| LLM (reasoning + voice) | Google Gemini — latest Gemini 2.5 family; Flash tier for the realtime voice loop + browser-use (latency), Pro tier for the planning/decision step. *(Confirm exact model IDs + LiveKit `google` plugin at build.)* |
-| Browser automation | `browser-use` (Playwright + Gemini) on the Acme admin panel |
+| LLM (reasoning + voice) | Google Gemini (key tested ✅) — `gemini-3.5-flash` for the realtime voice loop; `gemini-3.1-pro-preview` / `gemini-pro-latest` for the planning/decision step. |
+| Browser automation | `browser-use` (Playwright) on the Acme admin panel — default `gemini-3.5-flash`; try `gemini-2.5-computer-use-preview-10-2025` (purpose-built for browser/computer use) for reliability |
 | CRM | Attio (MCP + REST API) |
 | Email | Resend (send); inbound webhook = stretch |
 | Pre-call research | Gemini Google Search grounding (no separate vendor) |

@@ -1,0 +1,38 @@
+# Render Blueprint — deploys the public WEB service (Attio webhook endpoint,
+# LiveKit token server, call UI, and the mock Acme product).
+#
+# The LiveKit voice worker (agent/worker.py) and browser-use provisioning run
+# locally during the demo (they connect OUTBOUND to LiveKit Cloud and to this
+# service's /acme panel), so they don't need to be hosted here.
+services:
+  - type: web
+    name: onboarding-agent-web
+    runtime: python
+    plan: free
+    buildCommand: "pip install -r requirements-web.txt"
+    startCommand: "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: ATTIO_API_KEY
+        sync: false
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: RESEND_FROM
+        value: onboarding@resend.dev
+      - key: DEMO_CUSTOMER_EMAIL
+        sync: false
+      - key: ACME_ADMIN_USER
+        value: admin@acme.test
+      - key: ACME_ADMIN_PASS
+        sync: false
+      - key: LIVEKIT_URL
+        sync: false
+      - key: LIVEKIT_API_KEY
+        sync: false
+      - key: LIVEKIT_API_SECRET
+        sync: false
+      # IMPORTANT: after first deploy, set this to the service's own URL
+      # (e.g. https://onboarding-agent-web.onrender.com) and redeploy.
+      - key: PUBLIC_BASE_URL
+        sync: false
