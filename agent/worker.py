@@ -1,10 +1,10 @@
-"""LiveKit voice agent worker — the live onboarding call (Layers 3 & 4).
+"""LiveKit voice agent worker — the live onboarding call.
 
 Pipeline: Silero VAD -> SLNG STT -> Gemini LLM -> SLNG TTS.
-Tools the agent can call mid-conversation:
-  - provision_workspace: drives the Acme admin panel (browser-use / Playwright),
-    then writes the result back to Attio (note + status=Activated).  ← the "wow"
-  - escalate_to_human: creates an Attio task and stops (the autonomy boundary).
+
+The agent is freeform and active: it operates the Acme admin console with a real
+browser (browser-use, visible) based on the live conversation, emails the customer,
+and writes outcomes back to Attio.
 
 Run locally:  python -m agent.worker dev
 """
@@ -23,98 +23,125 @@ logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("worker")
 
 
-SYSTEM_PROMPT = """You are Acme's autonomous onboarding assistant, on a LIVE VOICE call with a \
-brand-new customer right after they signed. Be warm, brief, and natural — short spoken sentences.
+SYSTEM_PROMPT = """You are Acme's autonomous onboarding specialist on a LIVE VOICE call with a \
+brand-new customer right after they signed. Be warm, brief, natural, and proactive. You don't just
+talk — you actively DO the setup in Acme's admin console using your browser while you speak.
 
-Your job on this call:
-1. Greet them by name and congratulate them on getting started with Acme.
-2. Briefly confirm the setup details you already have (their company, plan, and seat count).
-3. Once confirmed, CALL the provision_workspace tool to create their workspace live. While it runs,
-   tell them you're setting things up right now.
-4. After it succeeds, tell them their workspace is live and that you've JUST EMAILED them a welcome
-   email containing their sign-in details (their email + a temporary password), their API key, and a
-   link to their dashboard. Tell them to check their inbox. If they ask what they log in with, say:
-   their email address and the temporary password in that welcome email — then they can change it.
-   Do NOT read the long API key aloud. Do NOT invent any other emails or links — only that one
-   welcome email is sent. Only state what actually happened.
-5. Offer one or two helpful next steps, then wrap up warmly.
+YOUR TOOLS
+- operate_admin(instruction): drive the Acme admin console with a natural-language instruction.
+  You can: create a workspace (company, plan, seats), invite members with a role (Viewer/Member/Admin),
+  generate API keys, toggle features (SSO, Audit log, Webhooks), and change the plan. Always use the
+  customer's real COMPANY NAME. Returns the resulting workspace state.
+- complete_onboarding(): emails the customer their sign-in details (email + temporary password) and
+  their API key, and marks them Activated in the CRM. Call this ONCE after the workspace exists, the
+  customer has been invited as an Admin, and an API key has been generated.
+- send_customer_email(subject, body): send the customer a freeform email (e.g. a recap, or extra
+  info they ask for during the call).
+- escalate_to_human(reason): hand off when something needs authority (discounts, contract/billing
+  changes) or the customer is hostile / the request is off-script.
 
-Boundaries — if the customer becomes hostile, asks for a discount, a contract or billing change, or
-anything outside standard setup that needs authority, do NOT improvise. CALL escalate_to_human with a
-short reason, tell them a specialist will follow up shortly, and stop trying to resolve it yourself.
+FLOW
+1. Greet them by name and congratulate them.
+2. Confirm the basics out loud (company, plan, seats).
+3. Say you're setting things up now, then call operate_admin to: create their workspace, invite them
+   (their email) as an Admin, and generate an API key — in a single instruction. If they mention
+   needs (SSO, more seats, inviting a colleague), fold those into the instruction.
+4. Briefly tell them what you did, then call complete_onboarding to email their credentials. Tell them
+   to check their inbox. If asked what they sign in with: their email + the temporary password in that
+   welcome email.
+5. Keep listening and ACT on what they say — invite teammates, enable features, change plan
+   (operate_admin), or send them info (send_customer_email). Narrate briefly while the browser works
+   ("give me a few seconds while I set that up").
 
-Keep every reply short enough to be spoken naturally."""
+Only state what actually happened — rely on the tool results, never invent keys, passwords, or actions.
+Keep spoken replies short."""
+
+
+def _summarize_ws(ws: dict | None) -> str:
+    if not ws:
+        return "No workspace found yet — you may need to create it first."
+    members = ", ".join(f"{m['email']} ({m['role']})" for m in ws.get("members", [])) or "none"
+    feats = ", ".join(f for f, v in ws.get("features", {}).items() if v) or "none"
+    return (f"Workspace '{ws['company']}' — {ws['plan']} plan, {ws['seats']} seats. "
+            f"Members: {members}. API keys: {len(ws.get('api_keys', []))}. Features on: {feats}.")
 
 
 class OnboardingAgent(Agent):
     def __init__(self, deal_id: str, ctx: dict):
         self.deal_id = deal_id
         self.ctx = ctx
-        extra = (f"\n\nWhat you know about this customer:\n"
+        extra = (f"\n\nWHAT YOU KNOW ABOUT THIS CUSTOMER:\n"
                  f"- Name: {ctx.get('customer_name')}\n"
                  f"- Company: {ctx.get('company')}\n"
                  f"- Plan: {ctx.get('plan')}  |  Seats: {ctx.get('seats')}\n"
-                 f"- Admin email to invite: {ctx.get('customer_email')}\n")
+                 f"- Their email (use this for the Admin invite + welcome email): {ctx.get('customer_email')}\n")
         if ctx.get("context_line"):
             extra += f"- Note: {ctx['context_line']}\n"
         super().__init__(instructions=SYSTEM_PROMPT + extra)
 
     @function_tool
-    async def provision_workspace(self, context: RunContext) -> str:
-        """Create the customer's Acme workspace (workspace, plan, seats, admin invite, API key)
-        and record the outcome in the CRM. Call this once the setup details are confirmed."""
-        c = self.ctx
-        log.info("provisioning workspace for %s", c.get("company"))
+    async def operate_admin(self, context: RunContext, instruction: str) -> str:
+        """Drive the Acme admin console to carry out a setup instruction (create workspace, invite
+        members, generate API keys, toggle features, change plan). Use the customer's real company name."""
+        log.info("operate_admin: %s", instruction)
         try:
-            ws = await provisioning.provision_workspace(
-                company=c.get("company") or "New Customer",
-                admin_email=c.get("customer_email"),
-                plan=c.get("plan", "Growth"),
-                seats=int(c.get("seats", 10) or 10),
-            )
+            await provisioning.operate_admin(instruction)
         except Exception as e:  # noqa: BLE001
-            log.error("provisioning failed: %s", e)
-            return "Provisioning failed unexpectedly. Tell the customer you'll have a specialist finish setup."
+            log.error("operate_admin failed: %s", e)
+            return f"The browser task ran into a problem ({e}). You can retry or escalate to a human."
+        try:
+            attio.update_record("deals", self.deal_id, {"onboarding_status": "Provisioning"})
+        except Exception:  # noqa: BLE001
+            pass
+        return "Done. " + _summarize_ws(provisioning.fetch_workspace(self.ctx.get("company", "")))
 
-        # Send the welcome email with sign-in credentials + API key.
-        dashboard_url = f"{config.PUBLIC_BASE_URL}/acme/login"
+    @function_tool
+    async def complete_onboarding(self, context: RunContext) -> str:
+        """Email the customer their sign-in details + API key and mark them Activated in the CRM.
+        Call once the workspace exists, the customer is invited as Admin, and an API key is generated."""
+        c = self.ctx
+        ws = provisioning.fetch_workspace(c.get("company", ""))
+        if not ws or not ws.get("members"):
+            return "No workspace or members found yet — create the workspace and invite the customer first."
+        email = (c.get("customer_email") or "").lower()
+        member = next((m for m in ws["members"] if m["email"].lower() == email), ws["members"][0])
+        api_key = ws["api_keys"][-1]["key"] if ws.get("api_keys") else "(no API key generated yet)"
+        dashboard = f"{config.PUBLIC_BASE_URL}/acme/login"
         emailed = False
         try:
             email_client.send_email(
-                to=c.get("customer_email") or config.DEMO_CUSTOMER_EMAIL,
-                subject=f"Your {ws['company']} workspace is ready 🎉",
+                to=member["email"], subject=f"Your {ws['company']} workspace is ready 🎉",
                 html=email_client.welcome_email_html(
-                    customer_name=c.get("customer_name", "there"),
-                    company=ws["company"], plan=ws["plan"], seats=ws["seats"],
-                    api_key=ws["api_key"], dashboard_url=dashboard_url,
-                    login_email=ws["login_email"], password=ws["password"]),
-            )
+                    c.get("customer_name", "there"), ws["company"], ws["plan"], ws["seats"],
+                    api_key, dashboard, member["email"], member["password"]))
             emailed = True
         except Exception as e:  # noqa: BLE001
             log.warning("welcome email failed: %s", e)
-
-        # Write back to Attio (best-effort).
-        note = (f"🤖 Onboarding call complete — workspace provisioned autonomously.\n"
-                f"Company: {ws['company']} | Plan: {ws['plan']} | Seats: {ws['seats']}\n"
-                f"Admin invited: {ws['admin_email']} | API key: {ws['api_key']}\n"
-                f"Welcome email sent: {emailed}")
+        note = (f"🤖 Onboarding complete — provisioned autonomously on the call.\n"
+                f"{_summarize_ws(ws)}\nWelcome email sent: {emailed} -> {member['email']}")
         try:
             attio.create_note("deals", self.deal_id, "Onboarding complete", note)
             attio.update_record("deals", self.deal_id, {"onboarding_status": "Activated"})
         except Exception as e:  # noqa: BLE001
             log.warning("attio write-back failed: %s", e)
+        return (f"Welcome email sent to {member['email']} with their login and API key, and the CRM is "
+                f"updated to Activated. Tell them warmly they're all set and to check their inbox."
+                if emailed else "Could not send the email; tell them their details are in the dashboard.")
 
-        sent = ("A welcome email with the API key and dashboard link was emailed to "
-                f"{c.get('customer_email')}." if emailed else
-                "The welcome email could not be sent; tell them the API key is in their dashboard.")
-        return (f"Success. Workspace '{ws['company']}' is live on the {ws['plan']} plan with "
-                f"{ws['seats']} seats. {sent} Tell the customer warmly that they're all set and to "
-                f"check their inbox.")
+    @function_tool
+    async def send_customer_email(self, context: RunContext, subject: str, body: str) -> str:
+        """Send the customer a freeform email (e.g. a recap or extra info they asked for)."""
+        to = self.ctx.get("customer_email") or config.DEMO_CUSTOMER_EMAIL
+        html = f"<div style='font-family:-apple-system,Segoe UI,Roboto,sans-serif'>{body.replace(chr(10), '<br>')}</div>"
+        try:
+            email_client.send_email(to=to, subject=subject, html=html)
+            return f"Email '{subject}' sent to {to}."
+        except Exception as e:  # noqa: BLE001
+            return f"Could not send the email: {e}"
 
     @function_tool
     async def escalate_to_human(self, context: RunContext, reason: str) -> str:
-        """Hand off to a human specialist. Call when the request needs authority (discounts,
-        contract/billing changes) or the customer is hostile / the situation is off-script."""
+        """Hand off to a human specialist (authority needed, hostile, or off-script)."""
         log.info("escalating: %s", reason)
         briefing = (f"🤖 Onboarding agent escalation for deal {self.deal_id}.\n"
                     f"Customer: {self.ctx.get('customer_name')} ({self.ctx.get('company')}).\n"
@@ -140,20 +167,19 @@ async def entrypoint(ctx: JobContext):
     await ctx.connect()
     name = ctx.room.name
     deal_id = name.split("--", 1)[1] if "--" in name else name.replace("onboard-", "")
-    log.info("call started for deal %s (room %s)", deal_id, ctx.room.name)
+    log.info("call started for deal %s (room %s)", deal_id, name)
 
     data = orchestrator.build_context(deal_id)
     try:
-        data["context_line"] = __import__("app.research", fromlist=["company_briefing_line"]) \
-            .company_briefing_line(data.get("company", ""))
-    except Exception:
+        from app import research
+        data["context_line"] = research.company_briefing_line(data.get("company", ""))
+    except Exception:  # noqa: BLE001
         data["context_line"] = ""
 
     session = _build_session()
     await session.start(agent=OnboardingAgent(deal_id, data), room=ctx.room)
     await session.generate_reply(
-        instructions=f"Greet {data.get('customer_name')} from {data.get('company')} warmly and start onboarding."
-    )
+        instructions=f"Greet {data.get('customer_name')} from {data.get('company')} warmly and start onboarding.")
 
 
 if __name__ == "__main__":
