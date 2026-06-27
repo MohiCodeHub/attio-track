@@ -64,7 +64,14 @@ def _extract_record_id(payload: dict) -> str | None:
             return v
         if isinstance(v, dict) and v.get("record_id"):
             return v["record_id"]
-    # Attio native webhook event shape
+    # Attio webhook delivery shape: {"events":[{"id":{"record_id": "..."}}]}
+    events = payload.get("events")
+    if isinstance(events, list) and events:
+        ev = events[0]
+        if isinstance(ev, dict):
+            rid = (ev.get("id") or {}).get("record_id") if isinstance(ev.get("id"), dict) else None
+            return rid or ev.get("record_id")
+    # other nested shapes
     for path in (("data", "id", "record_id"), ("event", "record_id")):
         node = payload
         ok = True
