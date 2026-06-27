@@ -46,10 +46,11 @@ async def attio_webhook(request: Request):
     except Exception:
         payload = {}
     record_id = _extract_record_id(payload)
-    log.info("attio webhook: record_id=%s payload_keys=%s", record_id, list(payload)[:8])
+    force = str(request.query_params.get("force", "")).lower() in ("1", "true", "yes")
+    log.info("attio webhook: record_id=%s force=%s payload_keys=%s", record_id, force, list(payload)[:8])
     if not record_id:
         return JSONResponse({"error": "no record_id in payload", "got": payload}, status_code=400)
-    result = orchestrator.handle_closed_won(record_id)
+    result = orchestrator.handle_closed_won(record_id, enforce_guard=not force)
     return {"status": "ok", "result": result}
 
 

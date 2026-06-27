@@ -15,6 +15,24 @@ from app import attio, config, email_client, research
 log = logging.getLogger("orchestrator")
 
 CALL_PATH = "/call"
+CLOSED_WON_STAGE = "Won 🎉"
+# Once onboarding has started/finished we must not re-process (prevents the
+# self-trigger loop: our write-backs are themselves record-update events).
+ALREADY_HANDLED = {"Scheduled", "Provisioning", "Activated", "Escalated"}
+
+
+def should_process(record_id: str) -> tuple[bool, str]:
+    """Guard so a deal-update webhook only acts on a genuine new 'Won' deal."""
+    try:
+        vals = attio.simple_values(attio.get_record("deals", record_id))
+    except Exception as e:  # noqa: BLE001
+        return False, f"could not read deal: {e}"
+    stage = vals.get("stage")
+    if stage != CLOSED_WON_STAGE:
+        return False, f"stage is '{stage}', not '{CLOSED_WON_STAGE}'"
+    if vals.get("onboarding_status") in ALREADY_HANDLED:
+        return False, f"already handled (onboarding_status={vals.get('onboarding_status')})"
+    return True, "ok"
 
 
 def call_url_for(record_id: str) -> str:
@@ -73,8 +91,18 @@ def _first_ref(record: dict, attr: str) -> str | None:
     return None
 
 
-def handle_closed_won(record_id: str) -> dict:
-    """Inbound webhook flow. Returns a small summary for logging/response."""
+def handle_closed_won(record_id: str, enforce_guard: bool = True) -> dict:
+    """Inbound webhook flow. Returns a small summary for logging/response.
+
+    enforce_guard=True (default) skips unless the deal is genuinely Won and not
+    already handled. Pass False to force-run (manual testing).
+    """
+    if enforce_guard:
+        ok, reason = should_process(record_id)
+        if not ok:
+            log.info("skip %s: %s", record_id, reason)
+            return {"record_id": record_id, "skipped": reason}
+
     ctx = build_context(record_id)
 
     # (Layer: research) one-line tailoring via Gemini grounding — best-effort.
