@@ -13,6 +13,8 @@
  button{background:#5b8cff;color:#fff;border:0;padding:14px 26px;border-radius:10px;font-size:15px;
         font-weight:600;cursor:pointer}
  button:disabled{opacity:.5;cursor:default}
+ button.muted{background:#b3402f}
+ #mute{display:none;margin-top:12px}
  .status{margin-top:22px;font-size:13px;color:#8b93a7;min-height:20px}
  .orb{width:96px;height:96px;border-radius:50%;margin:0 auto 22px;background:radial-gradient(circle at 50% 40%,#5b8cff,#22305c);
       box-shadow:0 0 0 0 rgba(91,140,255,.5);transition:transform .15s}
@@ -27,6 +29,7 @@
   <h1>Onboarding call</h1>
   <p class="sub">Talk to your onboarding assistant. It'll set up your workspace live.</p>
   <button id="join">Start call</button>
+  <button id="mute">🔇 Mute mic</button>
   <div class="status" id="status"></div>
 </div>
 
@@ -36,7 +39,19 @@ const deal = "__DEAL__";
 const statusEl = document.getElementById('status');
 const orb = document.getElementById('orb');
 const btn = document.getElementById('join');
+const muteBtn = document.getElementById('mute');
 function setStatus(s){ statusEl.textContent = s; }
+let activeRoom = null;
+let micOn = true;
+
+muteBtn.onclick = async () => {
+  if (!activeRoom) return;
+  micOn = !micOn;
+  await activeRoom.localParticipant.setMicrophoneEnabled(micOn);
+  muteBtn.textContent = micOn ? '🔇 Mute mic' : '🎙️ Unmute mic';
+  muteBtn.classList.toggle('muted', !micOn);
+  setStatus(micOn ? 'Mic live — the assistant can hear you.' : 'Muted — narrate freely; the assistant can\'t hear you.');
+};
 
 btn.onclick = async () => {
   btn.disabled = true;
@@ -45,6 +60,7 @@ btn.onclick = async () => {
     const res = await fetch('/api/token?deal=' + encodeURIComponent(deal));
     const { token, url } = await res.json();
     const room = new LivekitClient.Room({ adaptiveStream:true });
+    activeRoom = room;
 
     room.on(LivekitClient.RoomEvent.TrackSubscribed, (track) => {
       if (track.kind === 'audio') { track.attach(); orb.classList.add('live'); }
@@ -56,6 +72,8 @@ btn.onclick = async () => {
 
     await room.connect(url, token);
     await room.localParticipant.setMicrophoneEnabled(true);
+    micOn = true;
+    muteBtn.style.display = 'inline-block';
     setStatus('Connected — the assistant will greet you shortly.');
   } catch (e) {
     setStatus('Error: ' + e.message);
