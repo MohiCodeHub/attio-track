@@ -43,7 +43,7 @@ async def provision_via_playwright(company: str, admin_email: str, plan: str, se
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=os.environ.get("HEADLESS", "1") == "1")
         page = await browser.new_page()
-        await page.goto(f"{ACME_ADMIN_URL}/login")
+        await page.goto(f"{ACME_ADMIN_URL}/admin/login")
         await page.fill('input[name="email"]', config.ACME_ADMIN_USER)
         await page.fill('input[name="password"]', config.ACME_ADMIN_PASS)
         await page.click('button[type="submit"]')
@@ -67,7 +67,7 @@ async def provision_via_browser_use(company: str, admin_email: str, plan: str, s
 
     llm = ChatGoogle(model=config.GEMINI_BROWSER_MODEL, api_key=config.GOOGLE_API_KEY)
     task = (
-        f"Go to {ACME_ADMIN_URL}/login. Log in with email '{config.ACME_ADMIN_USER}' and "
+        f"Go to {ACME_ADMIN_URL}/admin/login. Log in with email '{config.ACME_ADMIN_USER}' and "
         f"password '{config.ACME_ADMIN_PASS}'. On the admin page, create a new workspace with "
         f"Company name '{company}', Admin email '{admin_email}', Plan '{plan}', and Seats '{seats}'. "
         f"Submit the form. Then stop."

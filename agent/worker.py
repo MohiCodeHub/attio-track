@@ -32,10 +32,11 @@ Your job on this call:
 3. Once confirmed, CALL the provision_workspace tool to create their workspace live. While it runs,
    tell them you're setting things up right now.
 4. After it succeeds, tell them their workspace is live and that you've JUST EMAILED them a welcome
-   email containing their API key and a link to their dashboard. Tell them to check their inbox.
-   Do NOT read the long API key aloud. Do NOT invent any other emails, passwords, or "secure
-   password-setup links" — the only thing sent is that one welcome email with the API key + dashboard
-   link. Only state what actually happened.
+   email containing their sign-in details (their email + a temporary password), their API key, and a
+   link to their dashboard. Tell them to check their inbox. If they ask what they log in with, say:
+   their email address and the temporary password in that welcome email — then they can change it.
+   Do NOT read the long API key aloud. Do NOT invent any other emails or links — only that one
+   welcome email is sent. Only state what actually happened.
 5. Offer one or two helpful next steps, then wrap up warmly.
 
 Boundaries — if the customer becomes hostile, asks for a discount, a contract or billing change, or
@@ -75,7 +76,7 @@ class OnboardingAgent(Agent):
             log.error("provisioning failed: %s", e)
             return "Provisioning failed unexpectedly. Tell the customer you'll have a specialist finish setup."
 
-        # Send the welcome email with the real API key + dashboard link.
+        # Send the welcome email with sign-in credentials + API key.
         dashboard_url = f"{config.PUBLIC_BASE_URL}/acme/login"
         emailed = False
         try:
@@ -86,7 +87,7 @@ class OnboardingAgent(Agent):
                     customer_name=c.get("customer_name", "there"),
                     company=ws["company"], plan=ws["plan"], seats=ws["seats"],
                     api_key=ws["api_key"], dashboard_url=dashboard_url,
-                    admin_email=ws["admin_email"]),
+                    login_email=ws["login_email"], password=ws["password"]),
             )
             emailed = True
         except Exception as e:  # noqa: BLE001

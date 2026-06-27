@@ -23,23 +23,26 @@ def send_email(to: str, subject: str, html: str, from_addr: str | None = None) -
 
 
 def welcome_email_html(customer_name: str, company: str, plan: str, seats: int,
-                       api_key: str, dashboard_url: str, admin_email: str) -> str:
+                       api_key: str, dashboard_url: str, login_email: str,
+                       password: str) -> str:
     return f"""
     <div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:540px;margin:0 auto;color:#0f172a">
       <h2 style="margin:0 0 8px">You're all set, {customer_name} 🎉</h2>
-      <p>Your <b>{company}</b> workspace is live on the <b>{plan}</b> plan ({seats} seats).
-         An admin invite has been sent to <b>{admin_email}</b>.</p>
+      <p>Your <b>{company}</b> workspace is live on the <b>{plan}</b> plan ({seats} seats).</p>
       <div style="background:#0f1117;color:#e6e8ee;border-radius:10px;padding:18px 20px;margin:20px 0">
-        <div style="font-size:12px;color:#8b93a7;margin-bottom:6px">YOUR API KEY</div>
-        <code style="font-size:14px;color:#8fd0ff;word-break:break-all">{api_key}</code>
+        <div style="font-size:12px;color:#8b93a7;margin-bottom:6px">SIGN IN</div>
+        <div style="font-size:14px">Email: <b>{login_email}</b></div>
+        <div style="font-size:14px">Temporary password: <code style="color:#8fd0ff">{password}</code></div>
+        <div style="font-size:12px;color:#8b93a7;margin:14px 0 6px">YOUR API KEY</div>
+        <code style="font-size:13px;color:#8fd0ff;word-break:break-all">{api_key}</code>
       </div>
       <p style="margin:24px 0">
         <a href="{dashboard_url}" style="background:#5b8cff;color:#fff;text-decoration:none;
            padding:12px 22px;border-radius:8px;font-weight:600;display:inline-block">
-           Open your dashboard →</a>
+           Sign in to your dashboard →</a>
       </p>
-      <p style="color:#64748b;font-size:13px">Dashboard: {dashboard_url}<br>
-         Keep your API key somewhere safe — it's also shown in your dashboard.</p>
+      <p style="color:#64748b;font-size:13px">Sign in at: {dashboard_url}<br>
+         Your API key is also shown in your dashboard once you log in.</p>
     </div>"""
 
 
