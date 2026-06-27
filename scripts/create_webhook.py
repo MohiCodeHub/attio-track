@@ -31,10 +31,12 @@ def main():
             httpx.delete(f"{B}/webhooks/{wid}", headers=H, timeout=30)
             print("removed old webhook", wid)
 
+    # Attio requires `filter` to be present; null = all record.updated events.
+    # Our handler filters to deals + stage 'Won 🎉' and is idempotent, so this is safe.
     body = {"data": {
         "target_url": target,
         "subscriptions": [
-            {"event_type": "record.updated", "filter": {"object": "deals", "attribute": "stage"}},
+            {"event_type": "record.updated", "filter": None},
         ],
     }}
     r = httpx.post(f"{B}/webhooks", headers=H, json=body, timeout=30)
