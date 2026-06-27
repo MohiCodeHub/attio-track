@@ -33,11 +33,13 @@ def main():
         "title": "Onboarding Status", "api_slug": "onboarding_status", "type": "status",
         "description": "Autonomous onboarding agent state",
         "is_required": False, "is_unique": False, "is_multiselect": False,
-        "config": {"status": {"options": [
-            {"title": "Pending"}, {"title": "Scheduled"}, {"title": "Provisioning"},
-            {"title": "Activated"}, {"title": "Escalated"}]}},
     }})
     print("onboarding_status attribute:", "created ✓" if s < 300 else f"exists/skip ({s})")
+    # status options must be created via the dedicated statuses API (not inline)
+    for title in ["Pending", "Scheduled", "Provisioning", "Activated", "Escalated"]:
+        call("POST", "/objects/deals/attributes/onboarding_status/statuses",
+             {"data": {"title": title}})
+    print("onboarding_status options ensured ✓")
 
     # 2) demo company
     s, d = call("POST", "/objects/companies/records", {"data": {"values": {
@@ -52,8 +54,15 @@ def main():
     person_id = d["data"]["id"]["record_id"] if s < 300 else None
     print("person Sam Rivera:", person_id or f"err {s} {str(d)[:120]}")
 
-    # 4) demo deal (stage Lead)
-    values = {"name": "Globex — Annual", "stage": "Lead"}
+    # 4) demo deal (stage Lead) — owner is required (actor-reference -> workspace member)
+    s_me, me = call("GET", "/self")
+    member_id = me.get("authorized_by_workspace_member_id")
+    values = {
+        "name": "Globex — Annual",
+        "stage": "Lead",
+        "owner": [{"referenced_actor_type": "workspace-member", "referenced_actor_id": member_id}],
+        "value": 24000,
+    }
     if company_id:
         values["associated_company"] = [{"target_object": "companies", "target_record_id": company_id}]
     if person_id:
