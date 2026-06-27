@@ -274,3 +274,11 @@ def api_workspaces():
 def api_workspace(slug: str):
     w = WORKSPACES.get(slug)
     return JSONResponse(w) if w else JSONResponse({"error": "not found"}, status_code=404)
+
+
+@router.post("/reset")
+def reset_acme():
+    """Demo helper: clear all workspaces + sessions for a fresh take."""
+    WORKSPACES.clear()
+    _SESSIONS.clear()
+    return JSONResponse({"ok": True, "cleared": True})
