@@ -34,7 +34,9 @@ How the console works:
   toggle features (SSO, Audit log, Webhooks), and change the plan.
 - To act on an existing workspace, open it from the list on the admin home.
 
-Complete the task below, then stop. Be efficient and verify each form submits.
+IMPORTANT: This is idempotent. If the workspace already exists, do NOT create a duplicate —
+open it instead. If a requested member or API key already exists, leave it as-is. Treat an
+already-correct end state as SUCCESS. Make only the changes needed, submit each form once, then stop.
 
 TASK: {{task}}"""
 

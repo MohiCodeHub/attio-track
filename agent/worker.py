@@ -51,7 +51,9 @@ FLOW
    needs (SSO, more seats, inviting a colleague), fold those into the instruction.
 4. Briefly tell them what you did, then call complete_onboarding to email their credentials. Tell them
    to check their inbox. If asked what they sign in with: their email + the temporary password in that
-   welcome email.
+   welcome email. IMPORTANT: call operate_admin ONCE for the initial setup. After it returns the
+   workspace state, do NOT call it again for the same setup — move on. Only call operate_admin again
+   for genuinely NEW changes the customer asks for later.
 5. Keep listening and ACT on what they say — invite teammates, enable features, change plan
    (operate_admin), or send them info (send_customer_email). ALWAYS give a spoken_preface first so
    they hear what you're doing before the ~minute-long browser step (never call operate_admin silently).
@@ -96,6 +98,13 @@ class OnboardingAgent(Agent):
             await context.session.say(spoken_preface).wait_for_playout()
         except Exception as e:  # noqa: BLE001
             log.warning("preface say failed: %s", e)
+        # Anti-loop guard: if this is the initial "create" and the workspace is already
+        # provisioned (members + key), don't re-run the browser — just report the state.
+        existing = provisioning.fetch_workspace(self.ctx.get("company", ""))
+        if (existing and "creat" in instruction.lower()
+                and existing.get("members") and existing.get("api_keys")):
+            log.info("operate_admin: already provisioned, skipping browser re-run")
+            return "Already set up. " + _summarize_ws(existing)
         try:
             await provisioning.operate_admin(instruction)
         except Exception as e:  # noqa: BLE001
