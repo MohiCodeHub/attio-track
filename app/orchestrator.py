@@ -21,6 +21,34 @@ CLOSED_WON_STAGE = "Won 🎉"
 ALREADY_HANDLED = {"Scheduled", "Provisioning", "Activated", "Escalated"}
 
 
+def process_deal_event(record_id: str) -> dict:
+    """Handle any deal record.updated event.
+
+    - stage == Won and not already handled  -> run onboarding (email).
+    - stage != Won and status != Pending    -> re-arm (set Pending) so the NEXT
+      flip to Won fires fresh. (Lets you redo the demo by dragging Won -> Lead -> Won.)
+    - otherwise no-op (also avoids self-trigger loops from our own writes).
+    """
+    try:
+        vals = attio.simple_values(attio.get_record("deals", record_id))
+    except Exception as e:  # noqa: BLE001
+        return {"skipped": f"read error: {e}"}
+    stage = vals.get("stage")
+    status = vals.get("onboarding_status")
+    if stage == CLOSED_WON_STAGE:
+        if status in ALREADY_HANDLED:
+            return {"skipped": f"already handled (status={status})"}
+        return handle_closed_won(record_id, enforce_guard=False)
+    # not Won: re-arm if needed (and don't write if already Pending -> no loop)
+    if status and status != "Pending":
+        try:
+            attio.update_record("deals", record_id, {"onboarding_status": "Pending"})
+            return {"armed": True, "stage": stage}
+        except Exception as e:  # noqa: BLE001
+            return {"skipped": f"arm failed: {e}"}
+    return {"noop": True, "stage": stage, "status": status}
+
+
 def should_process(record_id: str) -> tuple[bool, str]:
     """Guard so a deal-update webhook only acts on a genuine new 'Won' deal."""
     try:
