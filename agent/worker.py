@@ -137,7 +137,8 @@ def _build_session() -> AgentSession:
 
 async def entrypoint(ctx: JobContext):
     await ctx.connect()
-    deal_id = ctx.room.name.replace("onboard-", "")
+    name = ctx.room.name
+    deal_id = name.split("--", 1)[1] if "--" in name else name.replace("onboard-", "")
     log.info("call started for deal %s (room %s)", deal_id, ctx.room.name)
 
     data = orchestrator.build_context(deal_id)

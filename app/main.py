@@ -4,6 +4,7 @@ This is the public service deployed to Render. The LiveKit agent worker
 (agent/worker.py) runs separately and connects outbound to LiveKit Cloud.
 """
 import logging
+import secrets
 import time
 from pathlib import Path
 
@@ -26,7 +27,10 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 def room_for(deal_id: str) -> str:
-    return f"onboard-{deal_id}"
+    # Unique per call so every join creates a fresh room and the agent is always
+    # dispatched (LiveKit auto-dispatch fires on room creation, not on re-join).
+    # Worker parses the deal id from the part after "--".
+    return f"onboard-{secrets.token_hex(3)}--{deal_id}"
 
 
 @app.get("/health")
