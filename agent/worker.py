@@ -28,10 +28,13 @@ brand-new customer right after they signed. Be warm, brief, natural, and proacti
 talk — you actively DO the setup in Acme's admin console using your browser while you speak.
 
 YOUR TOOLS
-- operate_admin(instruction): drive the Acme admin console with a natural-language instruction.
-  You can: create a workspace (company, plan, seats), invite members with a role (Viewer/Member/Admin),
-  generate API keys, toggle features (SSO, Audit log, Webhooks), and change the plan. Always use the
-  customer's real COMPANY NAME. Returns the resulting workspace state.
+- operate_admin(instruction, spoken_preface): drive the Acme admin console with a natural-language
+  instruction. You can: create a workspace (company, plan, seats), invite members with a role
+  (Viewer/Member/Admin), generate API keys, toggle features (SSO, Audit log, Webhooks), and change
+  the plan. Always use the customer's real COMPANY NAME. ALWAYS pass spoken_preface — a short, natural
+  sentence saying what you're about to do (e.g. "Sure, I'm adding jane@globex.com to your members list
+  now, one moment") — it is spoken BEFORE the browser work, which takes ~a minute, so the customer is
+  never left in silence. Returns the resulting workspace state.
 - complete_onboarding(): emails the customer their sign-in details (email + temporary password) and
   their API key, and marks them Activated in the CRM. Call this ONCE after the workspace exists, the
   customer has been invited as an Admin, and an API key has been generated.
@@ -50,8 +53,8 @@ FLOW
    to check their inbox. If asked what they sign in with: their email + the temporary password in that
    welcome email.
 5. Keep listening and ACT on what they say — invite teammates, enable features, change plan
-   (operate_admin), or send them info (send_customer_email). Narrate briefly while the browser works
-   ("give me a few seconds while I set that up").
+   (operate_admin), or send them info (send_customer_email). ALWAYS give a spoken_preface first so
+   they hear what you're doing before the ~minute-long browser step (never call operate_admin silently).
 
 Only state what actually happened — rely on the tool results, never invent keys, passwords, or actions.
 Keep spoken replies short."""
@@ -80,10 +83,19 @@ class OnboardingAgent(Agent):
         super().__init__(instructions=SYSTEM_PROMPT + extra)
 
     @function_tool
-    async def operate_admin(self, context: RunContext, instruction: str) -> str:
+    async def operate_admin(self, context: RunContext, instruction: str, spoken_preface: str) -> str:
         """Drive the Acme admin console to carry out a setup instruction (create workspace, invite
-        members, generate API keys, toggle features, change plan). Use the customer's real company name."""
+        members, generate API keys, toggle features, change plan). Use the customer's real company name.
+
+        spoken_preface: a short, natural sentence telling the customer what you're about to do, e.g.
+        "Sure, I'm adding jane@globex.com to your members list now — give me a few seconds." This is
+        spoken aloud BEFORE the browser work begins (which takes a little while), so they're never
+        left in silence."""
         log.info("operate_admin: %s", instruction)
+        try:
+            await context.session.say(spoken_preface).wait_for_playout()
+        except Exception as e:  # noqa: BLE001
+            log.warning("preface say failed: %s", e)
         try:
             await provisioning.operate_admin(instruction)
         except Exception as e:  # noqa: BLE001
@@ -160,6 +172,11 @@ def _build_session() -> AgentSession:
         stt=slng.STT(api_key=config.SLNG_API_KEY, model=config.SLNG_STT_MODEL),
         llm=google.LLM(model=config.GEMINI_VOICE_MODEL, api_key=config.GOOGLE_API_KEY),
         tts=slng.TTS(api_key=config.SLNG_API_KEY, model=config.SLNG_TTS_MODEL),
+        # Harden against echo-triggered self-interruption (speaker feedback):
+        # require a real, multi-word utterance before cutting the agent off.
+        min_interruption_duration=0.8,
+        min_interruption_words=3,
+        resume_false_interruption=True,
     )
 
 
