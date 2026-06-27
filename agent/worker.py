@@ -17,7 +17,7 @@ from livekit.agents import (
 )
 from livekit.plugins import silero, google, slng
 
-from app import attio, config, orchestrator, provisioning
+from app import attio, config, email_client, orchestrator, provisioning
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("worker")
@@ -31,8 +31,11 @@ Your job on this call:
 2. Briefly confirm the setup details you already have (their company, plan, and seat count).
 3. Once confirmed, CALL the provision_workspace tool to create their workspace live. While it runs,
    tell them you're setting things up right now.
-4. After it succeeds, tell them their workspace is live, their admin invite is sent, and their API
-   key is waiting in their dashboard (do NOT read the long key aloud — just say it's in the dashboard).
+4. After it succeeds, tell them their workspace is live and that you've JUST EMAILED them a welcome
+   email containing their API key and a link to their dashboard. Tell them to check their inbox.
+   Do NOT read the long API key aloud. Do NOT invent any other emails, passwords, or "secure
+   password-setup links" — the only thing sent is that one welcome email with the API key + dashboard
+   link. Only state what actually happened.
 5. Offer one or two helpful next steps, then wrap up warmly.
 
 Boundaries — if the customer becomes hostile, asks for a discount, a contract or billing change, or
@@ -72,19 +75,40 @@ class OnboardingAgent(Agent):
             log.error("provisioning failed: %s", e)
             return "Provisioning failed unexpectedly. Tell the customer you'll have a specialist finish setup."
 
+        # Send the welcome email with the real API key + dashboard link.
+        dashboard_url = f"{config.PUBLIC_BASE_URL}/acme/login"
+        emailed = False
+        try:
+            email_client.send_email(
+                to=c.get("customer_email") or config.DEMO_CUSTOMER_EMAIL,
+                subject=f"Your {ws['company']} workspace is ready 🎉",
+                html=email_client.welcome_email_html(
+                    customer_name=c.get("customer_name", "there"),
+                    company=ws["company"], plan=ws["plan"], seats=ws["seats"],
+                    api_key=ws["api_key"], dashboard_url=dashboard_url,
+                    admin_email=ws["admin_email"]),
+            )
+            emailed = True
+        except Exception as e:  # noqa: BLE001
+            log.warning("welcome email failed: %s", e)
+
         # Write back to Attio (best-effort).
         note = (f"🤖 Onboarding call complete — workspace provisioned autonomously.\n"
                 f"Company: {ws['company']} | Plan: {ws['plan']} | Seats: {ws['seats']}\n"
-                f"Admin invited: {ws['admin_email']} | API key: {ws['api_key']}")
+                f"Admin invited: {ws['admin_email']} | API key: {ws['api_key']}\n"
+                f"Welcome email sent: {emailed}")
         try:
             attio.create_note("deals", self.deal_id, "Onboarding complete", note)
             attio.update_record("deals", self.deal_id, {"onboarding_status": "Activated"})
         except Exception as e:  # noqa: BLE001
             log.warning("attio write-back failed: %s", e)
 
+        sent = ("A welcome email with the API key and dashboard link was emailed to "
+                f"{c.get('customer_email')}." if emailed else
+                "The welcome email could not be sent; tell them the API key is in their dashboard.")
         return (f"Success. Workspace '{ws['company']}' is live on the {ws['plan']} plan with "
-                f"{ws['seats']} seats. Admin invite sent to {ws['admin_email']}. The API key has "
-                f"been generated and is in their dashboard. Tell the customer warmly that they're all set.")
+                f"{ws['seats']} seats. {sent} Tell the customer warmly that they're all set and to "
+                f"check their inbox.")
 
     @function_tool
     async def escalate_to_human(self, context: RunContext, reason: str) -> str:
