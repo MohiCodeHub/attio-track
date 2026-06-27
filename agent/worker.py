@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import logging
 
+import httpx
+
 from livekit.agents import (
     Agent, AgentSession, JobContext, WorkerOptions, cli, function_tool, RunContext,
 )
@@ -128,14 +130,16 @@ class OnboardingAgent(Agent):
         ws = provisioning.fetch_workspace(c.get("company", ""))
         if not ws or not ws.get("members"):
             return "No workspace or members found yet — create the workspace and invite the customer first."
-        email = (c.get("customer_email") or "").lower()
-        member = next((m for m in ws["members"] if m["email"].lower() == email), ws["members"][0])
+        # Always email the customer's own address (also the only deliverable address
+        # in Resend's sandbox); use the matching member for their login creds.
+        to = c.get("customer_email") or config.DEMO_CUSTOMER_EMAIL
+        member = next((m for m in ws["members"] if m["email"].lower() == to.lower()), ws["members"][0])
         api_key = ws["api_keys"][-1]["key"] if ws.get("api_keys") else "(no API key generated yet)"
         dashboard = f"{config.PUBLIC_BASE_URL}/acme/login"
         emailed = False
         try:
             email_client.send_email(
-                to=member["email"], subject=f"Your {ws['company']} workspace is ready 🎉",
+                to=to, subject=f"Your {ws['company']} workspace is ready 🎉",
                 html=email_client.welcome_email_html(
                     c.get("customer_name", "there"), ws["company"], ws["plan"], ws["seats"],
                     api_key, dashboard, member["email"], member["password"]))
@@ -143,13 +147,13 @@ class OnboardingAgent(Agent):
         except Exception as e:  # noqa: BLE001
             log.warning("welcome email failed: %s", e)
         note = (f"🤖 Onboarding complete — provisioned autonomously on the call.\n"
-                f"{_summarize_ws(ws)}\nWelcome email sent: {emailed} -> {member['email']}")
+                f"{_summarize_ws(ws)}\nWelcome email sent: {emailed} -> {to}")
         try:
             attio.create_note("deals", self.deal_id, "Onboarding complete", note)
             attio.update_record("deals", self.deal_id, {"onboarding_status": "Activated"})
         except Exception as e:  # noqa: BLE001
             log.warning("attio write-back failed: %s", e)
-        return (f"Welcome email sent to {member['email']} with their login and API key, and the CRM is "
+        return (f"Welcome email sent to {to} with their login and API key, and the CRM is "
                 f"updated to Activated. Tell them warmly they're all set and to check their inbox."
                 if emailed else "Could not send the email; tell them their details are in the dashboard.")
 
@@ -198,6 +202,14 @@ async def entrypoint(ctx: JobContext):
     name = ctx.room.name
     deal_id = name.split("--", 1)[1] if "--" in name else name.replace("onboard-", "")
     log.info("call started for deal %s (room %s)", deal_id, name)
+
+    # Fresh start each session: wipe the Acme product so the agent recreates the
+    # workspace from scratch on this call.
+    try:
+        httpx.post(f"{config.PUBLIC_BASE_URL}/acme/reset", timeout=10)
+        log.info("acme reset for fresh session")
+    except Exception as e:  # noqa: BLE001
+        log.warning("acme reset failed: %s", e)
 
     data = orchestrator.build_context(deal_id)
     try:
