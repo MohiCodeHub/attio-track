@@ -75,6 +75,7 @@ class OnboardingAgent(Agent):
     def __init__(self, deal_id: str, ctx: dict):
         self.deal_id = deal_id
         self.ctx = ctx
+        self._busy = False
         extra = (f"\n\nWHAT YOU KNOW ABOUT THIS CUSTOMER:\n"
                  f"- Name: {ctx.get('customer_name')}\n"
                  f"- Company: {ctx.get('company')}\n"
@@ -94,22 +95,34 @@ class OnboardingAgent(Agent):
         spoken aloud BEFORE the browser work begins (which takes a little while), so they're never
         left in silence."""
         log.info("operate_admin: %s", instruction)
+        instr_l = instruction.lower()
+        # 1) Busy lock: while a browser task is running (~60s), refuse duplicates so the
+        # model doesn't re-issue the same action on every new turn.
+        if getattr(self, "_busy", False):
+            return "I'm still finishing the previous step — one moment, I'll confirm when it's done."
+        # 2) Idempotency: skip the browser if the requested end-state already holds.
+        existing = provisioning.fetch_workspace(self.ctx.get("company", ""))
+        if existing:
+            if "creat" in instr_l and existing.get("members") and existing.get("api_keys"):
+                return "The workspace is already set up. " + _summarize_ws(existing)
+            featmap = {"sso": "SSO", "webhook": "Webhooks", "audit": "Audit log"}
+            wants_enable = any(w in instr_l for w in ("enable", "turn on", " on", "activate"))
+            for kw, fname in featmap.items():
+                if kw in instr_l and wants_enable and existing.get("features", {}).get(fname):
+                    return f"{fname} is already enabled for them. " + _summarize_ws(existing)
+        # announce, then do the work
         try:
             await context.session.say(spoken_preface).wait_for_playout()
         except Exception as e:  # noqa: BLE001
             log.warning("preface say failed: %s", e)
-        # Anti-loop guard: if this is the initial "create" and the workspace is already
-        # provisioned (members + key), don't re-run the browser — just report the state.
-        existing = provisioning.fetch_workspace(self.ctx.get("company", ""))
-        if (existing and "creat" in instruction.lower()
-                and existing.get("members") and existing.get("api_keys")):
-            log.info("operate_admin: already provisioned, skipping browser re-run")
-            return "Already set up. " + _summarize_ws(existing)
+        self._busy = True
         try:
             await provisioning.operate_admin(instruction)
         except Exception as e:  # noqa: BLE001
             log.error("operate_admin failed: %s", e)
             return f"The browser task ran into a problem ({e}). You can retry or escalate to a human."
+        finally:
+            self._busy = False
         try:
             attio.update_record("deals", self.deal_id, {"onboarding_status": "Provisioning"})
         except Exception:  # noqa: BLE001
